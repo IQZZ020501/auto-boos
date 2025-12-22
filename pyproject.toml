@@ -4,5 +4,6 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "pyside6>=6.10.1",
     "selenium>=4.39.0",
 ]

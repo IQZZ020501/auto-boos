@@ -21,6 +21,10 @@ qr_code.png
 debug_click_card_timeout.png
 *.png
 
+# Cookies (sensitive)
+cookies.json
+cookies*.json
+
 # IDEs
 .vscode/
 .idea/
