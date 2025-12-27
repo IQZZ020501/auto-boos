@@ -14,6 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+
 # ==========================================
 # 1. 样式表 (Light Tech Theme - 亮色科技风)
 # ==========================================
@@ -194,11 +195,13 @@ def get_stylesheet() -> str:
     }
     """
 
+
 # ==========================================
 # 2. 信号与日志处理
 # ==========================================
 class LogSignal(QObject):
     append_log = Signal(str)
+
 
 class QPlainTextEditLogger(logging.Handler):
     def __init__(self, widget):
@@ -214,6 +217,7 @@ class QPlainTextEditLogger(logging.Handler):
         except Exception:
             pass
 
+
 class WorkerSignals(QObject):
     log_message = Signal(str)
     update_status = Signal(str)
@@ -222,6 +226,7 @@ class WorkerSignals(QObject):
     logout_success = Signal()
     task_finished = Signal()
     error_occurred = Signal(str)
+
 
 # ==========================================
 # 3. 核心业务逻辑 (Driver & Worker)
@@ -311,14 +316,16 @@ class GuiBoosDriver(BoosDriver):
                     try:
                         icon = card.find_element(By.CSS_SELECTOR, ".online-marker")
                         if icon.is_displayed(): is_online = True
-                    except: pass
+                    except:
+                        pass
 
                     if has_kw and is_online:
                         target_card = card
                         target_id = gid
                         self.logger.info(f"找到匹配: {text.replace(chr(10), ' ')[:15]}...")
                         break
-                except: continue
+                except:
+                    continue
 
             if target_card:
                 processed_ids.add(target_id)
@@ -339,6 +346,7 @@ class GuiBoosDriver(BoosDriver):
 
     def stop_task(self):
         self._stop_flag = True
+
 
 class WorkerThread(QThread):
     def __init__(self):
@@ -411,16 +419,21 @@ class WorkerThread(QThread):
         self.signals.update_status.emit("正在退出...")
         cookie_file = "cookies.json"
         if os.path.exists(cookie_file):
-            try: os.remove(cookie_file)
-            except: pass
+            try:
+                os.remove(cookie_file)
+            except:
+                pass
         if self.driver:
-            try: self.driver.close()
-            except: pass
+            try:
+                self.driver.close()
+            except:
+                pass
             self.driver = None
         self.signals.logout_success.emit()
 
     def stop_current_task(self):
         if self.driver: self.driver.stop_task()
+
 
 # ==========================================
 # 4. 主界面 (GUI) - 亮色科技版
@@ -516,7 +529,7 @@ class MainWindow(QtWidgets.QMainWindow):
         login_btn_layout.addWidget(self.btn_logout, 1)
         login_layout.addLayout(login_btn_layout)
 
-        login_layout.addStretch() # 撑满
+        login_layout.addStretch()  # 撑满
 
         # === 右卡片：任务控制 ===
         card_task = QtWidgets.QFrame()
@@ -556,8 +569,10 @@ class MainWindow(QtWidgets.QMainWindow):
         form_greet.addWidget(self.spin_greet_count)
         form_greet.addStretch()
 
-        desc_greet = QtWidgets.QLabel("功能说明：\n1. 自动筛选符合关键词且在线的牛人。\n2. 点击名片进入详情页并打招呼。\n3. 若遇到每日上限，自动停止任务。")
-        desc_greet.setStyleSheet("color: #6b7280; font-size: 12px; line-height: 1.5; background: #f9fafb; padding: 10px; border-radius: 6px;")
+        desc_greet = QtWidgets.QLabel(
+            "功能说明：\n1. 自动筛选符合关键词且在线的牛人。\n2. 点击名片进入详情页并打招呼。\n3. 若遇到每日上限，自动停止任务。")
+        desc_greet.setStyleSheet(
+            "color: #6b7280; font-size: 12px; line-height: 1.5; background: #f9fafb; padding: 10px; border-radius: 6px;")
         desc_greet.setWordWrap(True)
 
         layout_greet.addLayout(form_greet)
@@ -583,8 +598,10 @@ class MainWindow(QtWidgets.QMainWindow):
         form_browse.addWidget(self.spin_browse_time)
         form_browse.addStretch()
 
-        desc_browse = QtWidgets.QLabel("功能说明：\n1. 打开第一个牛人详情页。\n2. 持续自动翻页 (按右键)，模拟活跃状态。\n3. 不进行沟通，仅增加账号浏览活跃度。")
-        desc_browse.setStyleSheet("color: #6b7280; font-size: 12px; line-height: 1.5; background: #f9fafb; padding: 10px; border-radius: 6px;")
+        desc_browse = QtWidgets.QLabel(
+            "功能说明：\n1. 打开第一个牛人详情页。\n2. 持续自动翻页 (按右键)，模拟活跃状态。\n3. 不进行沟通，仅增加账号浏览活跃度。")
+        desc_browse.setStyleSheet(
+            "color: #6b7280; font-size: 12px; line-height: 1.5; background: #f9fafb; padding: 10px; border-radius: 6px;")
         desc_browse.setWordWrap(True)
 
         layout_browse.addLayout(form_browse)
@@ -796,11 +813,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_login.setEnabled(True)
         self.lbl_status.setText("当前状态：发生错误")
 
+
 if __name__ == "__main__":
+    # --- 1. 修复 Windows 任务栏图标显示 (让系统认为这是个独立程序) ---
+    import ctypes
+
+    if sys.platform == 'win32':
+        try:
+            # 任意唯一的字符串 ID
+            myappid = 'boos.auto.helper.pro.v1'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception as e:
+            print(f"设置任务栏图标失败: {e}")
 
     app = QtWidgets.QApplication(sys.argv)
 
-    # 设置全局字体 (可选)
+    # --- 2. 设置全局应用图标 ---
+    # 假设你的图片名叫 logo.png，如果放在子文件夹要写 "assets/logo.png"
+    icon_path = "media/windown_icon.png"
+
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QtGui.QIcon(icon_path))
+    else:
+        # 如果找不到图片，打印个提示（仅调试用）
+        print(f"提示: 未找到图标文件 '{icon_path}'，将使用默认图标。")
+
+    # 设置全局字体
     font = QtGui.QFont("Segoe UI", 10)
     font.setStyleStrategy(QtGui.QFont.PreferAntialias)
     app.setFont(font)
