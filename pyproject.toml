@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "pyinstaller>=6.17.0",
     "pyside6>=6.10.1",
     "requests>=2.32.5",
     "selenium>=4.39.0",
