@@ -86,7 +86,6 @@ class BoosDriver:
         # 以“推荐牛人入口是否存在”作为登录成功判定
         if self._has_recommend_talents_menu(timeout_seconds=4):
             self.logger.info("cookie 登录成功（已检测到推荐牛人入口），跳过扫码流程")
-            print("cookie 登录成功（已检测到推荐牛人入口），跳过扫码流程")
             return True
 
         self.logger.info("cookie 登录失败（未检测到推荐牛人入口），将回退到扫码登录")
@@ -134,7 +133,6 @@ class BoosDriver:
             cookies = self.driver.get_cookies()
             save_cookies(self.cookie_path, cookies)
             self.logger.info(f"已保存 cookies：{self.cookie_path}")
-            print(f"已保存 cookies：{self.cookie_path}")
         except Exception as e:
             self.logger.warning(f"保存 cookies 失败：{str(e)}")
 
@@ -269,7 +267,6 @@ class BoosDriver:
                 close_btn = wait.until(EC.element_to_be_clickable((By.XPATH, selectors.DOWNLOAD_CLOSE_ICON_XPATH)))
                 self._safe_click(close_btn)
                 self.logger.info("已关闭下载弹层（X）")
-                print("已关闭下载弹层")
                 return
             except Exception as e:
                 self.logger.warning(f"尝试关闭下载弹层（X）时出现异常：{str(e)}")
@@ -278,7 +275,6 @@ class BoosDriver:
                     if btn.is_displayed():
                         self._safe_click(btn)
                         self.logger.info("已关闭下载弹层（i.icon-close）")
-                        print("已关闭下载弹层")
                         return
 
         except Exception as e:
@@ -497,13 +493,10 @@ class BoosDriver:
 
         if recommend_btn:
             self.logger.info(f"成功找到推荐牛人按钮，使用选择器: {used}")
-            print(f"找到推荐牛人按钮，使用选择器: {used}")
             recommend_btn.click()
             self.logger.info("成功点击推荐牛人按钮")
-            print("成功点击推荐牛人按钮！")
         else:
             self.logger.error("未能找到推荐牛人按钮")
-            print("未能找到推荐牛人按钮")
 
     def _click_talent_cards(self):
         """点击牛人名片获取详细信息"""
@@ -540,7 +533,6 @@ class BoosDriver:
                 cards = visible_cards
 
             self.logger.info(f"找到 {len(cards)} 个牛人卡片，准备点击第一个")
-            print(f"找到 {len(cards)} 个牛人卡片")
 
             before_handles = set(self.driver.window_handles)
             before_url = self.driver.current_url
@@ -581,15 +573,12 @@ class BoosDriver:
             if new_handles:
                 self.driver.switch_to.window(new_handles[0])
                 self.logger.info("检测到新窗口已打开，已切换到详情窗口")
-                print("检测到新窗口已打开，已切换到详情窗口")
             elif opened_mode in {"url_changed", "panel"}:
                 self.logger.info(f"检测到详情已打开（方式={opened_mode}），当前URL={self.driver.current_url}")
-                print("检测到详情已打开")
             else:
                 self.logger.warning(
                     "点击后未检测到详情打开（可能点到了非可点击区域/被遮挡/站点拦截），建议提高选择器精确度或查看页面是否实际发生变化"
                 )
-                print("点击后未检测到详情打开（可能点到了非可点击区域/被遮挡/站点拦截）")
 
         except Exception as e:
             try:
@@ -601,7 +590,6 @@ class BoosDriver:
                 self.logger.error(f"保存调试信息时出错：{str(e)}")
                 pass
             self.logger.error(f"点击牛人卡片流程出错: {str(e)}", exc_info=True)
-            print(f"点击牛人卡片流程出错: {str(e)}")
         finally:
             try:
                 self.driver.switch_to.default_content()
@@ -612,7 +600,6 @@ class BoosDriver:
     def _press_right_key_forever(self, interval_seconds: int = 5):
         """每隔 interval_seconds 秒发送一次键盘右方向键（可 Ctrl+C 退出）。"""
         self.logger.info(f"开始循环按键：每隔 {interval_seconds} 秒按一次右方向键（Ctrl+C 退出）")
-        print(f"开始循环按键：每隔 {interval_seconds} 秒按一次右方向键（Ctrl+C 退出）")
         try:
             while True:
                 try:
@@ -625,7 +612,6 @@ class BoosDriver:
                 time.sleep(interval_seconds)
         except KeyboardInterrupt:
             self.logger.info("检测到 Ctrl+C，已退出按键循环")
-            print("已退出按键循环")
 
     # -------- 对外 API --------
     def login_and_run(self):
@@ -658,7 +644,6 @@ class BoosDriver:
 
         if self._has_recommend_talents_menu(timeout_seconds=4):
             self.logger.info("已检测到推荐牛人入口，视为登录成功")
-            print("已检测到推荐牛人入口，视为登录成功")
             self._persist_cookies()
             self._close_download_popup_if_present(timeout_seconds=2)
         else:
@@ -666,8 +651,7 @@ class BoosDriver:
             self._click_app_scan_login()
             self._get_qrcode()
 
-            print("\n请使用手机APP扫描二维码并完成登录，登录成功后按回车键继续...")
-            self.logger.info("等待用户扫码登录...")
+            self.logger.info("\n请使用手机APP扫描二维码并完成登录，登录成功后按回车键继续...")
             input("扫码登录完成后，按回车键继续...")
             self.logger.info("用户确认登录完成")
 
