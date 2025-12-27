@@ -830,7 +830,7 @@ if __name__ == "__main__":
 
     # --- 2. 设置全局应用图标 ---
     # 假设你的图片名叫 logo.png，如果放在子文件夹要写 "assets/logo.png"
-    icon_path = "media/windown_icon.png"
+    icon_path = "media/windown_icon.ico"
 
     if os.path.exists(icon_path):
         app.setWindowIcon(QtGui.QIcon(icon_path))
