@@ -32,3 +32,6 @@ cookies*.json
 # OS
 .DS_Store
 Thumbs.db
+
+build/*
+dist/*
