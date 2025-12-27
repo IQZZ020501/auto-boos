@@ -56,7 +56,6 @@ class BoosDriver:
                         if el.is_displayed():
                             return True
                 except Exception as e:
-                    self.logger.error(f"检测推荐牛人入口时出错（选择器={kind}:{value}）：{str(e)}")
                     continue
             return False
 
@@ -112,11 +111,7 @@ class BoosDriver:
     def _safe_click(self, element, timeout: int = 10):
         wait = WebDriverWait(self.driver, timeout)
         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-
-        try:
-            wait.until(lambda d: element.is_displayed())
-        except:
-            pass
+        wait.until(lambda d: element.is_displayed())
 
         try:
             ActionChains(self.driver).move_to_element(element).pause(0.1).perform()
@@ -124,7 +119,6 @@ class BoosDriver:
             pass
 
         try:
-            # 尝试等待元素可点击
             wait.until(EC.element_to_be_clickable(element))
         except Exception as e:
             pass
@@ -253,10 +247,7 @@ class BoosDriver:
     # -------- 核心逻辑：自动打招呼 --------
 
     def _handle_limit_dialog(self) -> bool:
-        """
-        检查并处理每日沟通上限提示。
-        返回 True 表示遇到了上限（并已尝试关闭）。
-        """
+        """检查并处理每日沟通上限提示。返回 True 表示遇到了上限。"""
         try:
             # 1. 检测是否有“今日主动沟通数已达上限”的文本
             # 考虑到弹窗可能在 top level document，先尝试切换回 default_content
@@ -265,7 +256,7 @@ class BoosDriver:
             except:
                 pass
 
-            # 使用 contains 文本匹配
+            # 使用 contains 文本匹配，比较稳健
             xpath_text = "//h3[contains(text(), '今日主动沟通数已达上限')]"
 
             # 快速检查是否存在上限提示元素
@@ -280,15 +271,12 @@ class BoosDriver:
 
             self.logger.warning("【检测到】今日主动沟通数已达上限！准备关闭弹窗...")
 
-            # 2. 尝试关闭弹窗
-            # 根据提供的HTML，关闭按钮是 .boss-popup__close
-            # 也可以尝试特定的 Xpath: /html/body/div[7]/div[1]/div[2]/i (但这可能随DOM层级变化)
-
+            # 2. 尝试多种方式关闭弹窗
             close_strategies = [
                 (By.CSS_SELECTOR, ".boss-popup__close"),  # HTML中看到的类名
-                (By.XPATH, "/html/body/div[7]/div[1]/div[2]/i"), # 用户指定的XPath
-                (By.CSS_SELECTOR, ".dialog-close"), # 常见备用
-                (By.CSS_SELECTOR, ".close-icon"),   # 常见备用
+                (By.XPATH, "/html/body/div[7]/div[1]/div[2]/i"),  # 用户指定的XPath
+                (By.CSS_SELECTOR, ".dialog-close"),  # 常见备用
+                (By.CSS_SELECTOR, ".close-icon"),  # 常见备用
             ]
 
             closed = False
@@ -317,7 +305,6 @@ class BoosDriver:
 
         except Exception as e:
             self.logger.error(f"处理上限弹窗逻辑出错: {str(e)}")
-            # 出错了为了安全起见，假设是遇到了弹窗
             return True
 
     def _run_greet_loop(self, target_count: int):
@@ -376,7 +363,6 @@ class BoosDriver:
                         break
 
                 except Exception as e:
-                    self.logger.error(f"筛选卡片时出错，跳过此卡片: {str(e)}")
                     continue
 
             # 3. 执行操作
@@ -410,7 +396,6 @@ class BoosDriver:
 
     def _close_detail_page(self):
         """关闭详情页的通用方法"""
-        # 尝试切换回主文档，以防详情页在iframe中或者有顶层遮罩
         try:
             self.driver.switch_to.default_content()
         except:
@@ -418,7 +403,6 @@ class BoosDriver:
 
         close_xpath = "/html/body/div[2]/div[1]/div[2]/i"
         try:
-            # 增加显式等待，确保遮罩层消失后可点击
             wait = WebDriverWait(self.driver, 3)
             close_btn = wait.until(EC.element_to_be_clickable((By.XPATH, close_xpath)))
             self._safe_click(close_btn)
@@ -426,7 +410,6 @@ class BoosDriver:
         except Exception:
             try:
                 close_btn = self.driver.find_element(By.CSS_SELECTOR, ".iboss-close, .dialog-close")
-                # 使用 JS 点击以防拦截
                 self.driver.execute_script("arguments[0].click();", close_btn)
             except Exception:
                 ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
@@ -486,13 +469,13 @@ class BoosDriver:
 
     # -------- 核心逻辑：刷浏览量 --------
 
-    def _run_browse_loop(self):
+    def _run_browse_loop(self, max_minutes: int = 20):
         """
         刷浏览量模式逻辑：
         1. 点开第一个人进入详情页
-        2. 无限循环：按右键 (向右翻页)
+        2. 循环：按右键 (向右翻页)，默认限制时长
         """
-        self.logger.info("准备进入刷浏览量模式...")
+        self.logger.info(f"准备进入刷浏览量模式，默认限时 {max_minutes} 分钟...")
 
         cards = []
         for selector in selectors.CARD_SELECTOR_CANDIDATES:
@@ -510,15 +493,80 @@ class BoosDriver:
             self.logger.warning("未找到卡片，无法进入详情页，请手动打开一个详情页。")
             self._scroll_down_list()
 
-        self.logger.info("开始执行无限翻页（每3秒按一次右方向键）。按 Ctrl+C 可在控制台中断。")
-        print("\n正在刷浏览量... (程序将在详情页不断按 '→' 键切换下一位)")
+        self.logger.info(f"开始执行翻页（每3秒按一次右方向键）。限时 {max_minutes} 分钟。按 Ctrl+C 可在控制台中断。")
+        print(f"\n正在刷浏览量... (程序将在详情页不断按 '→' 键切换下一位，限时 {max_minutes} 分钟)")
+
+        start_time = time.time()
+        end_time = start_time + (max_minutes * 60)
 
         try:
-            while True:
+            while time.time() < end_time:
                 self._turn_page_right_detail()
+
+                # 偶尔输出一下剩余时间
+                remaining = int(end_time - time.time())
+                if remaining > 0 and remaining % 60 == 0:
+                    self.logger.info(f"剩余时间: {remaining // 60} 分钟")
+
                 time.sleep(3)
+
+            self.logger.info("刷浏览量任务时间结束。")
+            print("\n时间到，已结束刷浏览量任务，返回主菜单。")
+
+            # 任务结束，尝试退出详情页
+            self._close_detail_page()
+
         except KeyboardInterrupt:
             self.logger.info("用户中断刷浏览量模式。")
+
+    # -------- 新增：扫码检测逻辑 --------
+    def _wait_for_scan_login(self):
+        """轮询检测是否扫码成功，以及二维码是否需要刷新"""
+        self.logger.info("进入扫码检测模式...")
+        print("\n" + "=" * 40)
+        print("请使用手机 BOSS直聘 APP 扫描屏幕上的二维码进行登录。")
+        print("程序将自动检测登录状态，请勿关闭窗口...")
+        print("=" * 40 + "\n")
+
+        while True:
+            # 1. 检测登录成功（推荐牛人入口出现）
+            if self._has_recommend_talents_menu(timeout_seconds=2):
+                self.logger.info("检测到推荐牛人入口，扫码登录成功！")
+                break
+
+            # 2. 检测二维码是否失效
+            try:
+                # 优先使用 CSS 选择器定位失效提示框内的按钮
+                # HTML: <div class="invalid-box">...<button ...>点击刷新</button></div>
+                invalid_box_btns = self.driver.find_elements(By.CSS_SELECTOR, ".invalid-box button")
+
+                # 如果 CSS 没找到，尝试用户提供的 XPath
+                if not invalid_box_btns:
+                    user_xpath = "/html/body/div/div/div[2]/div[2]/div[2]/div[2]/div[1]/div/button"
+                    invalid_box_btns = self.driver.find_elements(By.XPATH, user_xpath)
+
+                if invalid_box_btns:
+                    btn = invalid_box_btns[0]
+                    if btn.is_displayed():
+                        self.logger.warning("检测到二维码已失效，正在自动点击刷新...")
+                        self._safe_click(btn)
+                        # 等待刷新动画
+                        time.sleep(3)
+                        self.logger.info("二维码已刷新。")
+
+                        # --- 获取新二维码URL ---
+                        try:
+                            # 重新查找二维码图片元素
+                            qr_img = self.driver.find_element(By.CSS_SELECTOR, selectors.QRCODE_IMG_CSS)
+                            new_src = qr_img.get_attribute("src")
+                            self.logger.info(f"新的二维码URL: {new_src}")
+                        except Exception as e:
+                            self.logger.warning(f"获取新二维码URL失败: {str(e)}")
+                        # ---------------------
+            except Exception as e:
+                pass
+
+            time.sleep(1)
 
     # -------- 对外 API --------
     def login_and_run(self):
@@ -542,8 +590,10 @@ class BoosDriver:
         else:
             self._click_app_scan_login()
             self._get_qrcode()
-            self.logger.info("\n请使用手机APP扫描二维码并完成登录...")
-            input("扫码登录完成后，按回车键继续...")
+
+            # 使用新的轮询等待方法替换 input
+            self._wait_for_scan_login()
+
             self._persist_cookies()
             self._close_download_popup_if_present(timeout_seconds=3)
 
@@ -580,7 +630,7 @@ class BoosDriver:
                     print("输入无效，请输入数字。")
 
             elif choice == "2":
-                self._run_browse_loop()
+                self._run_browse_loop(max_minutes=20)
 
             elif choice == "3":
                 self.logger.info("用户选择退出。")
