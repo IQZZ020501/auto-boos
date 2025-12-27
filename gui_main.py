@@ -2,6 +2,7 @@ import sys
 import logging
 import requests
 import time
+import os
 import threading
 from io import BytesIO
 
@@ -41,9 +42,10 @@ class QPlainTextEditLogger(logging.Handler):
 # --- 信号类 ---
 class WorkerSignals(QObject):
     log_message = Signal(str)
-    update_status = Signal(str) # 新增：更新状态标签信号
+    update_status = Signal(str) # 更新状态标签
     qr_code_url = Signal(str)
     login_success = Signal()
+    logout_success = Signal()   # 新增：退出登录成功信号
     task_finished = Signal()
     error_occurred = Signal(str)
 
@@ -74,10 +76,8 @@ class GuiBoosDriver(BoosDriver):
         """重写刷浏览量循环，支持停止标志"""
         self.logger.info(f"准备进入刷浏览量模式，限时 {max_minutes} 分钟...")
 
-        # 初始寻找卡片逻辑 (简化版)
         self._scroll_down_list()
 
-        # 打开第一个
         cards = []
         for selector in selectors.CARD_SELECTOR_CANDIDATES:
             frame, els = self._find_cards_any_frame(selector)
@@ -120,7 +120,6 @@ class GuiBoosDriver(BoosDriver):
                 self.logger.info("用户停止了任务")
                 break
 
-            # 1. 查找
             cards = []
             for selector in selectors.CARD_SELECTOR_CANDIDATES:
                 frame, els = self._find_cards_any_frame(selector)
@@ -133,7 +132,6 @@ class GuiBoosDriver(BoosDriver):
                 self._scroll_down_list()
                 continue
 
-            # 2. 筛选
             target_card = None
             target_id = None
             for card in cards:
@@ -158,7 +156,6 @@ class GuiBoosDriver(BoosDriver):
                         break
                 except: continue
 
-            # 3. 操作
             if target_card:
                 processed_ids.add(target_id)
                 try:
@@ -186,37 +183,38 @@ class WorkerThread(QThread):
         super().__init__()
         self.signals = WorkerSignals()
         self.driver = None
-        self.action = None # 'login', 'greet', 'browse'
+        self.action = None # 'login', 'greet', 'browse', 'logout'
         self.params = {}
 
     def run(self):
         try:
-            # 初始化 Driver
-            if not self.driver:
+            # 初始化 Driver (如果还没初始化且不是退出操作)
+            if not self.driver and self.action != 'logout':
                 self.driver = GuiBoosDriver(self.signals)
 
             if self.action == 'login':
                 self._do_login()
+            elif self.action == 'logout':
+                self._do_logout()
             elif self.action == 'greet':
-                self.driver._stop_flag = False
-                self.driver._run_greet_loop(self.params.get('count', 5))
-                self.signals.task_finished.emit()
+                if self.driver:
+                    self.driver._stop_flag = False
+                    self.driver._run_greet_loop(self.params.get('count', 5))
+                    self.signals.task_finished.emit()
             elif self.action == 'browse':
-                self.driver._stop_flag = False
-                self.driver._run_browse_loop(self.params.get('minutes', 20))
-                self.signals.task_finished.emit()
+                if self.driver:
+                    self.driver._stop_flag = False
+                    self.driver._run_browse_loop(self.params.get('minutes', 20))
+                    self.signals.task_finished.emit()
 
         except Exception as e:
-            # 捕获所有异常并通过信号发送
             self.signals.error_occurred.emit(str(e))
 
     def _do_login(self):
         try:
             self.signals.update_status.emit("正在打开浏览器...")
-            # 1. 打开首页
             self.driver.driver.get("https://www.zhipin.com/")
 
-            # 2. 尝试注入 Cookie
             applied = self.driver._inject_cookies_if_present()
 
             if applied > 0:
@@ -226,27 +224,20 @@ class WorkerThread(QThread):
                 self.driver.driver.refresh()
                 self.driver._click_login_if_present(3)
 
-                # --- 修复点开始 ---
                 if self.driver._has_recommend_talents_menu(timeout_seconds=5):
                     self.signals.log_message.emit("Cookie 验证成功，无需扫码！")
                     self.driver._persist_cookies()
-
-                    # 补上这一步：点击推荐牛人，进入核心页面
                     self.driver._click_recommend_talents()
-
                     self.signals.login_success.emit()
                     return
-                # --- 修复点结束 ---
                 else:
                     self.signals.log_message.emit("Cookie 已失效，切换到扫码登录...")
             else:
                 self.signals.log_message.emit("未检测到本地 Cookie，准备扫码登录...")
 
-            # 3. 扫码登录流程
             self.signals.update_status.emit("等待获取二维码...")
             self.driver._close_download_popup_if_present(2)
             self.driver._click_login_if_present(2)
-
             self.driver._click_app_scan_login()
             self.driver._get_qrcode()
 
@@ -254,8 +245,6 @@ class WorkerThread(QThread):
 
             self.driver._persist_cookies()
             self.driver._close_download_popup_if_present(2)
-
-            # 扫码流程本身就会执行这步，所以保持不变
             self.driver._click_recommend_talents()
 
             self.signals.log_message.emit("扫码登录成功！")
@@ -263,6 +252,32 @@ class WorkerThread(QThread):
 
         except Exception as e:
             raise e
+
+    def _do_logout(self):
+        """执行退出登录逻辑"""
+        self.signals.update_status.emit("正在退出登录...")
+
+        # 1. 删除本地 Cookie 文件
+        cookie_file = "cookies.json"
+        if os.path.exists(cookie_file):
+            try:
+                os.remove(cookie_file)
+                self.signals.log_message.emit(f"已删除本地文件: {cookie_file}")
+            except Exception as e:
+                self.signals.log_message.emit(f"删除 Cookie 文件失败: {e}")
+        else:
+            self.signals.log_message.emit("本地 Cookie 文件不存在")
+
+        # 2. 关闭浏览器
+        if self.driver:
+            self.signals.log_message.emit("正在关闭浏览器...")
+            try:
+                self.driver.close() # 这会调用 driver.quit()
+            except Exception as e:
+                self.signals.log_message.emit(f"关闭浏览器时出错(可忽略): {e}")
+            self.driver = None # 重置 driver 对象
+
+        self.signals.logout_success.emit()
 
     def stop_current_task(self):
         if self.driver:
@@ -280,8 +295,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker = WorkerThread()
         self.worker.signals.qr_code_url.connect(self.display_qr_code)
         self.worker.signals.log_message.connect(self.append_log)
-        self.worker.signals.update_status.connect(self.update_qr_label) # 连接状态更新信号
+        self.worker.signals.update_status.connect(self.update_qr_label)
         self.worker.signals.login_success.connect(self.on_login_success)
+        self.worker.signals.logout_success.connect(self.on_logout_success) # 连接退出信号
         self.worker.signals.task_finished.connect(self.on_task_finished)
         self.worker.signals.error_occurred.connect(self.on_error)
 
@@ -313,9 +329,21 @@ class MainWindow(QtWidgets.QMainWindow):
         # 1. 登录模块
         grp_login = QtWidgets.QGroupBox("1. 初始化")
         login_layout = QtWidgets.QVBoxLayout()
+
+        # 按钮行
+        btn_row = QtWidgets.QHBoxLayout()
         self.btn_login = QtWidgets.QPushButton("启动浏览器 & 登录")
         self.btn_login.clicked.connect(self.start_login)
-        login_layout.addWidget(self.btn_login)
+
+        self.btn_logout = QtWidgets.QPushButton("退出登录")
+        self.btn_logout.setStyleSheet("background-color: #ff4d4f;") # 红色按钮
+        self.btn_logout.setEnabled(False) # 初始禁用
+        self.btn_logout.clicked.connect(self.start_logout)
+
+        btn_row.addWidget(self.btn_login)
+        btn_row.addWidget(self.btn_logout)
+        login_layout.addLayout(btn_row)
+
         grp_login.setLayout(login_layout)
 
         # 2. 二维码/状态显示区
@@ -331,13 +359,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 3. 任务控制模块
         self.grp_task = QtWidgets.QGroupBox("2. 任务执行")
-        self.grp_task.setEnabled(False) # 登录后解锁
+        self.grp_task.setEnabled(False)
         task_layout = QtWidgets.QVBoxLayout()
 
-        # 选项卡
         self.tabs = QtWidgets.QTabWidget()
 
-        # Tab 1: 打招呼
+        # Tab 1
         tab_greet = QtWidgets.QWidget()
         form_greet = QtWidgets.QFormLayout(tab_greet)
         self.spin_greet_count = QtWidgets.QSpinBox()
@@ -346,7 +373,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form_greet.addRow("打招呼人数:", self.spin_greet_count)
         self.tabs.addTab(tab_greet, "自动打招呼")
 
-        # Tab 2: 刷浏览量
+        # Tab 2
         tab_browse = QtWidgets.QWidget()
         form_browse = QtWidgets.QFormLayout(tab_browse)
         self.spin_browse_time = QtWidgets.QSpinBox()
@@ -358,13 +385,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         task_layout.addWidget(self.tabs)
 
-        # 提示标签
         self.lbl_status = QtWidgets.QLabel("请先登录，并在浏览器中手动选好城市/职位。")
         self.lbl_status.setWordWrap(True)
         self.lbl_status.setStyleSheet("color: #666; font-size: 11px;")
         task_layout.addWidget(self.lbl_status)
 
-        # 按钮
         btn_layout = QtWidgets.QHBoxLayout()
         self.btn_start = QtWidgets.QPushButton("开始任务")
         self.btn_start.clicked.connect(self.start_task)
@@ -394,14 +419,11 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.addWidget(right_panel, 1)
 
     def setup_logging(self):
-        # 配置日志，将其重定向到 GUI
         handler = QPlainTextEditLogger(self.txt_log)
         handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
         logger = logging.getLogger('core.boos_driver')
         logger.setLevel(logging.INFO)
         logger.addHandler(handler)
-
         logging.getLogger().addHandler(handler)
 
     @Slot(str)
@@ -421,7 +443,6 @@ class MainWindow(QtWidgets.QMainWindow):
             response.raise_for_status()
             image = QtGui.QImage()
             image.loadFromData(response.content)
-
             pixmap = QtGui.QPixmap.fromImage(image)
             self.lbl_qr.setPixmap(pixmap.scaled(200, 200, QtCore.Qt.KeepAspectRatio))
         except Exception as e:
@@ -430,6 +451,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def start_login(self):
         self.btn_login.setEnabled(False)
+        self.btn_logout.setEnabled(False)
         self.txt_log.appendPlainText(">>> 正在启动浏览器...")
         self.lbl_qr.setText("正在初始化...")
         self.worker.action = 'login'
@@ -440,7 +462,35 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_qr.setText("已登录")
         self.grp_task.setEnabled(True)
         self.btn_login.setText("已登录")
+        self.btn_login.setEnabled(False) # 登录成功后禁用登录按钮
+        self.btn_logout.setEnabled(True) # 启用退出按钮
         self.lbl_status.setText("状态：已就绪。请在浏览器中确认 城市/职位 筛选已设置好。")
+
+    def start_logout(self):
+        # 确认对话框
+        reply = QtWidgets.QMessageBox.question(
+            self, '确认退出', "确定要清除 Cookie 并关闭浏览器吗？",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, QtWidgets.QMessageBox.No
+        )
+        if reply == QtWidgets.QMessageBox.Yes:
+            self.txt_log.appendPlainText(">>> 正在退出登录...")
+            self.btn_logout.setEnabled(False)
+            self.worker.action = 'logout'
+            self.worker.start()
+
+    def on_logout_success(self):
+        self.txt_log.appendPlainText(">>> 已退出登录，资源已释放。")
+        self.lbl_qr.setText("未运行")
+        self.lbl_qr.clear()
+
+        # 重置界面状态
+        self.btn_login.setEnabled(True)
+        self.btn_login.setText("启动浏览器 & 登录")
+        self.btn_logout.setEnabled(False)
+
+        self.grp_task.setTitle("2. 任务执行")
+        self.grp_task.setEnabled(False)
+        self.lbl_status.setText("请先登录，并在浏览器中手动选好城市/职位。")
 
     def start_task(self):
         idx = self.tabs.currentIndex()
@@ -457,6 +507,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
+        self.btn_logout.setEnabled(False) # 任务运行中禁止退出登录
         self.grp_task.setTitle("2. 任务执行 (运行中...)")
         self.worker.start()
 
@@ -469,6 +520,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.txt_log.appendPlainText(">>> 任务结束")
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.btn_logout.setEnabled(True) # 恢复退出按钮
         self.grp_task.setTitle("2. 任务执行")
 
     def on_error(self, msg):
@@ -476,6 +528,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.btn_login.setEnabled(True)
+        self.btn_logout.setEnabled(False) # 出错时禁用退出，允许重新登录
         self.lbl_qr.setText("发生错误")
 
 if __name__ == "__main__":
