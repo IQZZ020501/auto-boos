@@ -15,7 +15,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# --- 日志重定向 (修复版) ---
+# --- 日志重定向 ---
 class LogSignal(QObject):
     """用于发送日志的信号类"""
     append_log = Signal(str)
@@ -41,6 +41,7 @@ class QPlainTextEditLogger(logging.Handler):
 # --- 信号类 ---
 class WorkerSignals(QObject):
     log_message = Signal(str)
+    update_status = Signal(str) # 新增：更新状态标签信号
     qr_code_url = Signal(str)
     login_success = Signal()
     task_finished = Signal()
@@ -211,33 +212,56 @@ class WorkerThread(QThread):
 
     def _do_login(self):
         try:
+            self.signals.update_status.emit("正在打开浏览器...")
+            # 1. 打开首页
             self.driver.driver.get("https://www.zhipin.com/")
-            self.driver._inject_cookies_if_present()
+
+            # 2. 尝试注入 Cookie
+            applied = self.driver._inject_cookies_if_present()
+
+            if applied > 0:
+                self.signals.log_message.emit(f"检测到 {applied} 个本地 Cookie，尝试自动登录...")
+                self.signals.update_status.emit("正在验证 Cookie...")
+
+                self.driver.driver.refresh()
+                self.driver._click_login_if_present(3)
+
+                # --- 修复点开始 ---
+                if self.driver._has_recommend_talents_menu(timeout_seconds=5):
+                    self.signals.log_message.emit("Cookie 验证成功，无需扫码！")
+                    self.driver._persist_cookies()
+
+                    # 补上这一步：点击推荐牛人，进入核心页面
+                    self.driver._click_recommend_talents()
+
+                    self.signals.login_success.emit()
+                    return
+                # --- 修复点结束 ---
+                else:
+                    self.signals.log_message.emit("Cookie 已失效，切换到扫码登录...")
+            else:
+                self.signals.log_message.emit("未检测到本地 Cookie，准备扫码登录...")
+
+            # 3. 扫码登录流程
+            self.signals.update_status.emit("等待获取二维码...")
             self.driver._close_download_popup_if_present(2)
             self.driver._click_login_if_present(2)
 
-            if self.driver._has_recommend_talents_menu(3):
-                self.signals.log_message.emit("Cookie 登录成功！")
-                self.driver._persist_cookies()
-                self.signals.login_success.emit()
-                return
-
-            # 需要扫码
             self.driver._click_app_scan_login()
             self.driver._get_qrcode()
 
-            # 使用新的轮询检测方法
             self.driver._wait_for_scan_login()
 
             self.driver._persist_cookies()
             self.driver._close_download_popup_if_present(2)
+
+            # 扫码流程本身就会执行这步，所以保持不变
             self.driver._click_recommend_talents()
 
             self.signals.log_message.emit("扫码登录成功！")
             self.signals.login_success.emit()
 
         except Exception as e:
-            # 这里抛出异常，让 run 方法捕获
             raise e
 
     def stop_current_task(self):
@@ -248,11 +272,6 @@ class WorkerThread(QThread):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.tabs = None
-        self.btn_login = None
-        self.grp_task = None
-        self.spin_greet_count = None
-        self.spin_browse_time = None
         self.setWindowTitle("Boss直聘 自动助手")
         self.resize(900, 650)
         self.setStyleSheet(self._get_style())
@@ -260,7 +279,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # 初始化后台线程
         self.worker = WorkerThread()
         self.worker.signals.qr_code_url.connect(self.display_qr_code)
-        self.worker.signals.log_message.connect(self.append_log) # 专门用于非 logger 的消息
+        self.worker.signals.log_message.connect(self.append_log)
+        self.worker.signals.update_status.connect(self.update_qr_label) # 连接状态更新信号
         self.worker.signals.login_success.connect(self.on_login_success)
         self.worker.signals.task_finished.connect(self.on_task_finished)
         self.worker.signals.error_occurred.connect(self.on_error)
@@ -277,7 +297,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QPushButton:hover { background-color: #00a9a8; }
             QPushButton:disabled { background-color: #cccccc; }
             QTextEdit { background-color: #1e1e1e; color: #00ff00; font-family: Consolas; font-size: 12px; }
-            QLabel#QrLabel { border: 2px dashed #cccccc; background-color: #f9f9f9; }
+            QLabel#QrLabel { border: 2px dashed #cccccc; background-color: #f9f9f9; color: #555; font-weight: bold;}
         """
 
     def init_ui(self):
@@ -298,8 +318,8 @@ class MainWindow(QtWidgets.QMainWindow):
         login_layout.addWidget(self.btn_login)
         grp_login.setLayout(login_layout)
 
-        # 2. 二维码显示区
-        self.lbl_qr = QtWidgets.QLabel("等待获取二维码...")
+        # 2. 二维码/状态显示区
+        self.lbl_qr = QtWidgets.QLabel("未运行")
         self.lbl_qr.setObjectName("QrLabel")
         self.lbl_qr.setAlignment(QtCore.Qt.AlignCenter)
         self.lbl_qr.setFixedSize(200, 200)
@@ -378,12 +398,10 @@ class MainWindow(QtWidgets.QMainWindow):
         handler = QPlainTextEditLogger(self.txt_log)
         handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
-        # 获取 core 模块的 logger
         logger = logging.getLogger('core.boos_driver')
         logger.setLevel(logging.INFO)
         logger.addHandler(handler)
 
-        # 也可以捕获根 logger
         logging.getLogger().addHandler(handler)
 
     @Slot(str)
@@ -391,10 +409,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.txt_log.appendPlainText(text)
 
     @Slot(str)
+    def update_qr_label(self, text):
+        self.lbl_qr.clear()
+        self.lbl_qr.setText(text)
+
+    @Slot(str)
     def display_qr_code(self, url):
-        self.txt_log.appendPlainText(f"收到二维码 URL: {url}")
+        self.txt_log.appendPlainText(f"收到二维码 URL，请扫码...")
         try:
-            # 下载图片
             response = requests.get(url)
             response.raise_for_status()
             image = QtGui.QImage()
@@ -404,10 +426,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_qr.setPixmap(pixmap.scaled(200, 200, QtCore.Qt.KeepAspectRatio))
         except Exception as e:
             self.txt_log.appendPlainText(f"二维码加载失败: {e}")
+            self.lbl_qr.setText("二维码加载失败")
 
     def start_login(self):
         self.btn_login.setEnabled(False)
         self.txt_log.appendPlainText(">>> 正在启动浏览器...")
+        self.lbl_qr.setText("正在初始化...")
         self.worker.action = 'login'
         self.worker.start()
 
@@ -421,13 +445,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def start_task(self):
         idx = self.tabs.currentIndex()
         if idx == 0:
-            # 打招呼
             count = self.spin_greet_count.value()
             self.worker.action = 'greet'
             self.worker.params = {'count': count}
             self.txt_log.appendPlainText(f">>> 启动任务：自动打招呼 ({count}人)")
         else:
-            # 刷浏览量
             mins = self.spin_browse_time.value()
             self.worker.action = 'browse'
             self.worker.params = {'minutes': mins}
@@ -454,6 +476,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.btn_login.setEnabled(True)
+        self.lbl_qr.setText("发生错误")
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
