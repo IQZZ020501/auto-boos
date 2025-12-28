@@ -15,6 +15,12 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
 
+def resource_path(relative_path):
+    if hasattr(sys, "_MEIPASS"):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
+
 # ==========================================
 # 1. 样式表 (Light Tech Theme - 亮色科技风)
 # ==========================================
@@ -830,7 +836,9 @@ if __name__ == "__main__":
 
     # --- 2. 设置全局应用图标 ---
     # 假设你的图片名叫 logo.png，如果放在子文件夹要写 "assets/logo.png"
-    icon_path = "media/windown_icon.ico"
+    icon_path = resource_path("media/windown_icon.ico")
+    app.setWindowIcon(QtGui.QIcon(icon_path))
+
 
     if os.path.exists(icon_path):
         app.setWindowIcon(QtGui.QIcon(icon_path))
