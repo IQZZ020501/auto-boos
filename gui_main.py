@@ -702,7 +702,7 @@ class MainWindow(QtWidgets.QMainWindow):
         handler.setFormatter(logging.Formatter('[%(asctime)s] %(message)s', "%H:%M:%S"))
         logger = logging.getLogger('core.boos_driver')
         logger.setLevel(logging.INFO)
-        logger.addHandler(handler)
+        # logger.addHandler(handler)
         logging.getLogger().addHandler(handler)
 
     @Slot(str)
